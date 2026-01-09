@@ -1,0 +1,122 @@
+// Schéma Prisma pour l'application de réservation Padel CSE STMicroelectronics
+// Architecture "Private Club" avec gestion d'employés
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Modèle User : Employés STMicroelectronics
+model User {
+  id           String   @id @default(uuid())
+  matricule    String   @unique // Matricule employé unique
+  nom          String
+  prenom       String
+  email        String   @unique // Email unique (géré par les admins)
+  soldeTickets Int      @default(0) // Solde de tickets pour les réservations
+  role         UserRole @default(USER) // Rôle utilisateur (USER ou ADMIN)
+  bloque       Boolean  @default(false) // Utilisateur bloqué (cotisation non payée, etc.)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relation avec les réservations
+  bookings       Booking[] // Réservations organisées
+  participations BookingParticipant[] // Réservations où l'utilisateur participe
+
+  @@map("users")
+}
+
+// Rôle utilisateur
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+// Modèle Court : Terrains de Padel (exactement 3 terrains)
+model Court {
+  id        String   @id @default(uuid())
+  numero    Int      @unique // Numéro du terrain (1, 2, ou 3)
+  nom       String // Nom du terrain (ex: "Court Central")
+  actif     Boolean  @default(true) // Terrain disponible ou non
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relation avec les réservations
+  bookings       Booking[]
+  timeSlotBlocks TimeSlotBlock[] // Plages horaires bloquées
+
+  @@map("courts")
+}
+
+// Modèle Booking : Réservations
+model Booking {
+  id              String        @id @default(uuid())
+  userId          String // Organisateur de la réservation
+  courtId         String
+  date            DateTime // Date et heure de la réservation
+  duree           Int           @default(60) // Durée en minutes (par défaut 60)
+  statut          BookingStatus @default(CONFIRME)
+  ticketsUtilises Int           @default(0) // Nombre de tickets utilisés (0 à 3)
+  utiliseTickets  Boolean       @default(false) // Indique si la réservation utilise des tickets
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  court        Court                @relation(fields: [courtId], references: [id], onDelete: Cascade)
+  participants BookingParticipant[] // Les 4 participants requis
+
+  @@index([userId, date])
+  @@index([courtId, date])
+  @@index([date])
+  @@map("bookings")
+}
+
+// Modèle BookingParticipant : Participants à une réservation (4 requis)
+model BookingParticipant {
+  id        String   @id @default(uuid())
+  bookingId String
+  userId    String // Participant
+  createdAt DateTime @default(now())
+
+  // Relations
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingId, userId]) // Un utilisateur ne peut participer qu'une fois à une réservation
+  @@index([bookingId])
+  @@index([userId])
+  @@map("booking_participants")
+}
+
+// Statut de réservation
+enum BookingStatus {
+  CONFIRME
+  ANNULE
+  TERMINE
+}
+
+// Modèle TimeSlotBlock : Blocage de plages horaires
+model TimeSlotBlock {
+  id        String   @id @default(uuid())
+  courtId   String? // Si null, bloque tous les terrains
+  date      DateTime // Date du blocage
+  startTime String // Heure de début (format HH:mm)
+  endTime   String // Heure de fin (format HH:mm)
+  raison    String? // Raison du blocage (maintenance, événement, etc.)
+  actif     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relation
+  court Court? @relation(fields: [courtId], references: [id], onDelete: Cascade)
+
+  @@index([date])
+  @@index([courtId])
+  @@map("time_slot_blocks")
+}
