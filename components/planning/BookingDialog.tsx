@@ -13,12 +13,13 @@ interface User {
   nom: string
   prenom: string
   email: string
+  activeBookingsCount?: number
 }
 
 interface BookingDialogProps {
   open: boolean
   onClose: () => void
-  onConfirm: (participantIds: string[] | null, useTickets?: boolean) => void
+  onConfirm: (participantIds: string[] | null, ticketsCount?: number) => void
   slotDate: Date
   slotDuration: number
   courtName: string
@@ -28,6 +29,10 @@ interface BookingDialogProps {
   isAdmin?: boolean // Mode admin : permet de sélectionner librement l'organisateur
   isModifyMode?: boolean // Mode modification : pour remplacer tickets par participants
   bookingId?: string // ID de la réservation à modifier
+  existingBooking?: {
+    ticketsUtilises: number
+    participants?: { userId: string }[]
+  } // Données de la réservation existante en mode modification
 }
 
 export function BookingDialog({
@@ -42,11 +47,41 @@ export function BookingDialog({
   currentUserTickets = 0,
   isAdmin = false,
   isModifyMode = false,
-  bookingId
+  bookingId,
+  existingBooking
 }: BookingDialogProps) {
   const [selectedParticipants, setSelectedParticipants] = useState<string[]>(isAdmin ? [] : [currentUserId])
   const [searchTerm, setSearchTerm] = useState('')
-  const [useTickets, setUseTickets] = useState(false)
+  const [ticketsCount, setTicketsCount] = useState<number>(0) // 0 = pas de tickets, 1-3 = nombre de tickets à utiliser
+
+  // En mode modification, initialiser avec les données de la réservation existante
+  useEffect(() => {
+    if (open) {
+      if (isModifyMode && existingBooking) {
+        // Initialiser avec les tickets actuels
+        if (existingBooking.ticketsUtilises > 0) {
+          setTicketsCount(existingBooking.ticketsUtilises)
+        } else {
+          setTicketsCount(0)
+        }
+        // Initialiser avec les participants actuels
+        if (existingBooking.participants && existingBooking.participants.length > 0) {
+          const participantIds = existingBooking.participants.map(p => p.userId).filter(Boolean)
+          if (participantIds.length > 0) {
+            setSelectedParticipants(participantIds)
+          } else {
+            setSelectedParticipants(isAdmin ? [] : [currentUserId])
+          }
+        } else {
+          setSelectedParticipants(isAdmin ? [] : [currentUserId])
+        }
+      } else {
+        // Réinitialiser quand on n'est plus en mode modification
+        setTicketsCount(0)
+        setSelectedParticipants(isAdmin ? [] : [currentUserId])
+      }
+    }
+  }, [isModifyMode, existingBooking, open, isAdmin, currentUserId])
 
   // S'assurer que l'utilisateur actuel est toujours sélectionné (sauf en mode admin)
   useEffect(() => {
@@ -77,7 +112,8 @@ export function BookingDialog({
       }
       setSelectedParticipants(selectedParticipants.filter(id => id !== userId))
     } else {
-      if (selectedParticipants.length < 4) {
+      const maxParticipants = ticketsCount > 0 ? 4 - ticketsCount : 4
+      if (selectedParticipants.length < maxParticipants) {
         // En mode admin, le premier sélectionné devient l'organisateur
         setSelectedParticipants([...selectedParticipants, userId])
       }
@@ -85,22 +121,31 @@ export function BookingDialog({
   }
 
   const handleConfirm = () => {
-    if (useTickets) {
-      // Mode tickets : pas de participants, juste confirmer avec tickets
-      onConfirm(null, true)
-      setSelectedParticipants(isAdmin ? [] : [currentUserId])
-      setSearchTerm('')
-      setUseTickets(false)
+    if (ticketsCount > 0) {
+      // Mode tickets : calculer le nombre de participants requis
+      const participantsNecessaires = 4 - ticketsCount
+      if (selectedParticipants.length === participantsNecessaires) {
+        onConfirm(selectedParticipants.length > 0 ? selectedParticipants : null, ticketsCount)
+        setSelectedParticipants(isAdmin ? [] : [currentUserId])
+        setSearchTerm('')
+        setTicketsCount(0)
+      }
     } else if (selectedParticipants.length === 4) {
-      // Mode participants : 4 participants requis
-      onConfirm(selectedParticipants, false)
+      // Mode participants : 4 participants requis (pas de tickets)
+      onConfirm(selectedParticipants, 0)
       setSelectedParticipants(isAdmin ? [] : [currentUserId])
       setSearchTerm('')
-      setUseTickets(false)
+      setTicketsCount(0)
     }
   }
 
-  const canUseTickets = currentUserTickets >= 3 && !isModifyMode
+  // En mode modification, on peut utiliser les tickets déjà utilisés + les tickets disponibles
+  const ticketsActuellementUtilises = isModifyMode ? (ticketsCount || 0) : 0
+  const maxTicketsAvailable = isModifyMode 
+    ? Math.min((currentUserTickets || 0) + ticketsActuellementUtilises, 3)
+    : Math.min(currentUserTickets || 0, 3)
+  const canUseTickets = maxTicketsAvailable > 0
+  const participantsNecessaires = ticketsCount > 0 ? 4 - ticketsCount : 4
 
   const currentUser = availableUsers.find(u => u.id === currentUserId)
   const organizerId = isAdmin ? selectedParticipants[0] : currentUserId
@@ -122,39 +167,69 @@ export function BookingDialog({
         </DialogHeader>
 
         <div className="space-y-4">
-          {/* Option tickets (uniquement si pas en mode modification et assez de tickets) */}
-          {!isModifyMode && canUseTickets && (
+          {/* Option tickets (assez de tickets) */}
+          {canUseTickets && (
             <div className="p-4 border rounded-lg bg-blue-50">
-              <div className="flex items-center gap-2 mb-2">
-                <input
-                  type="checkbox"
-                  id="useTickets"
-                  checked={useTickets}
-                  onChange={(e) => {
-                    setUseTickets(e.target.checked)
-                    if (e.target.checked) {
-                      setSelectedParticipants([])
-                    }
-                  }}
-                  className="w-4 h-4"
-                />
-                <label htmlFor="useTickets" className="text-sm font-medium cursor-pointer">
-                  Réserver avec 3 tickets (sans participants pour l'instant)
-                </label>
+              <label className="text-sm font-medium mb-3 block">
+                {isModifyMode ? 'Modifier le nombre de tickets' : 'Utiliser des tickets (optionnel)'} - Disponibles : {isModifyMode ? (currentUserTickets + ticketsActuellementUtilises) : currentUserTickets}
+                {isModifyMode && ticketsActuellementUtilises > 0 && (
+                  <span className="text-xs text-gray-500 ml-2">(dont {ticketsActuellementUtilises} déjà utilisés)</span>
+                )}
+              </label>
+              <div className="flex gap-3 mb-2">
+                {[1, 2, 3].map((count) => (
+                  <button
+                    key={count}
+                    type="button"
+                    onClick={() => {
+                      if (ticketsCount === count) {
+                        setTicketsCount(0)
+                        if (!isAdmin) {
+                          setSelectedParticipants([currentUserId])
+                        } else {
+                          setSelectedParticipants([])
+                        }
+                      } else if (currentUserTickets >= count) {
+                        setTicketsCount(count)
+                        // Ajuster les participants sélectionnés si nécessaire
+                        const participantsNecessaires = 4 - count
+                        if (selectedParticipants.length > participantsNecessaires) {
+                          const newParticipants = selectedParticipants.slice(0, participantsNecessaires)
+                          if (!isAdmin && !newParticipants.includes(currentUserId)) {
+                            newParticipants[0] = currentUserId
+                          }
+                          setSelectedParticipants(newParticipants)
+                        }
+                      }
+                    }}
+                    disabled={currentUserTickets < count}
+                    className={`px-4 py-2 rounded-md border transition-colors ${
+                      ticketsCount === count
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : currentUserTickets >= count
+                        ? 'bg-white border-gray-300 hover:bg-gray-50'
+                        : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                    }`}
+                  >
+                    {count} ticket{count > 1 ? 's' : ''}
+                  </button>
+                ))}
               </div>
-              <p className="text-xs text-gray-600 ml-6">
-                Vous pourrez remplacer les tickets par des participants jusqu'à 30 minutes avant la réservation.
-                Vos tickets disponibles : {currentUserTickets}
-              </p>
+              {ticketsCount > 0 && (
+                <p className="text-xs text-gray-600 mt-2">
+                  Vous utiliserez {ticketsCount} ticket{ticketsCount > 1 ? 's' : ''} et devrez sélectionner {participantsNecessaires} participant{participantsNecessaires > 1 ? 's' : ''}.
+                  Vous pourrez remplacer les tickets par des participants jusqu'à 30 minutes avant la réservation.
+                </p>
+              )}
             </div>
           )}
 
-          {!useTickets && (
+          {ticketsCount === 0 && (
             <>
           {/* Participants sélectionnés */}
           <div>
             <label className="text-sm font-medium mb-2 block">
-              Participants sélectionnés ({selectedParticipants.length}/4)
+              Participants sélectionnés ({selectedParticipants.length}/{participantsNecessaires})
             </label>
             <div className="flex flex-wrap gap-2">
               {selectedParticipants.map((userId, index) => {
@@ -209,7 +284,8 @@ export function BookingDialog({
                 <div className="divide-y">
                   {filteredUsers.map(user => {
                     const isSelected = selectedParticipants.includes(user.id)
-                    const canSelect = selectedParticipants.length < 4 || isSelected
+                    const maxParticipants = ticketsCount > 0 ? 4 - ticketsCount : 4
+                    const canSelect = selectedParticipants.length < maxParticipants || isSelected
                     return (
                       <button
                         key={user.id}
@@ -223,10 +299,24 @@ export function BookingDialog({
                           <div>
                             <div className="font-medium">
                               {user.prenom} {user.nom}
+                              {typeof user.activeBookingsCount === 'number' && (
+                                <span className={`ml-2 text-xs font-normal ${
+                                  user.activeBookingsCount >= 2 ? 'text-red-600 font-semibold' : 
+                                  user.activeBookingsCount === 1 ? 'text-orange-600' : 
+                                  'text-gray-500'
+                                }`}>
+                                  ({user.activeBookingsCount} réservation{user.activeBookingsCount > 1 ? 's' : ''} active{user.activeBookingsCount > 1 ? 's' : ''})
+                                </span>
+                              )}
                             </div>
                             <div className="text-xs text-gray-500">
                               {user.email} • Matricule: {user.matricule}
                             </div>
+                            {typeof user.activeBookingsCount === 'number' && user.activeBookingsCount >= 2 && (
+                              <div className="text-xs text-red-600 mt-1 font-medium">
+                                ⚠️ Quota atteint (2 max)
+                              </div>
+                            )}
                           </div>
                           {isSelected && (
                             <Badge variant="default" className="ml-2">
@@ -251,10 +341,14 @@ export function BookingDialog({
           </Button>
           <Button
             onClick={handleConfirm}
-            disabled={!useTickets && selectedParticipants.length !== 4}
+            disabled={
+              ticketsCount === 0 
+                ? selectedParticipants.length !== 4
+                : selectedParticipants.length !== participantsNecessaires
+            }
           >
-            {useTickets 
-              ? `Confirmer avec 3 tickets`
+            {ticketsCount > 0
+              ? `Confirmer avec ${ticketsCount} ticket${ticketsCount > 1 ? 's' : ''} et ${selectedParticipants.length}/${participantsNecessaires} participant${participantsNecessaires > 1 ? 's' : ''}`
               : `Confirmer la réservation (${selectedParticipants.length}/4)`
             }
           </Button>

@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json()
-    const { courtId, date, duree = 60, participantIds, useTickets } = body
+    const { courtId, date, duree = 60, participantIds, ticketsCount = 0 } = body
 
     if (!courtId || !date) {
       return NextResponse.json(
@@ -150,22 +150,34 @@ export async function POST(req: NextRequest) {
     }
 
     const bookingDate = new Date(date)
-    const useTicketsMode = useTickets === true
+    const ticketsToUse = ticketsCount && ticketsCount > 0 ? parseInt(ticketsCount) : 0
 
-    // Validation : soit useTickets=true, soit participantIds avec 4 participants
-    if (!useTicketsMode && (!participantIds || !Array.isArray(participantIds) || participantIds.length !== 4)) {
+    // Validation : soit ticketsCount entre 1 et 3, soit participantIds avec le bon nombre de participants
+    if (ticketsToUse === 0 && (!participantIds || !Array.isArray(participantIds) || participantIds.length !== 4)) {
       return NextResponse.json(
         { 
           error: 'Mode de réservation invalide', 
-          message: 'Vous devez soit utiliser 3 tickets (useTickets=true), soit fournir exactement 4 participants.' 
+          message: 'Vous devez soit utiliser 1, 2 ou 3 tickets, soit fournir exactement 4 participants.' 
         },
         { status: 400 }
       )
     }
 
-    // Mode 1: Réservation avec tickets (3 tickets)
-    if (useTicketsMode) {
-      const ticketsNecessaires = 3
+    if (ticketsToUse > 0 && ticketsToUse <= 3) {
+      const ticketsNecessaires = ticketsToUse
+      const participantsNecessaires = 4 - ticketsNecessaires
+      
+      // Validation : vérifier que le nombre de participants correspond
+      const participantsCount = participantIds && Array.isArray(participantIds) ? participantIds.length : 0
+      if (participantsCount !== participantsNecessaires) {
+        return NextResponse.json(
+          { 
+            error: 'Nombre de participants invalide', 
+            message: `Avec ${ticketsNecessaires} ticket(s), vous devez fournir exactement ${participantsNecessaires} participant(s).` 
+          },
+          { status: 400 }
+        )
+      }
       
       // Vérifier que l'utilisateur a assez de tickets
       if (dbUser.soldeTickets < ticketsNecessaires) {
@@ -191,7 +203,7 @@ export async function POST(req: NextRequest) {
 
       const canCreateResult = await canUserCreateBooking(dbUser.id)
       if (!canCreateResult.canCreate) {
-        let message = `Vous avez déjà ${canCreateResult.activeCount || 0} réservation(s) active(s). Maximum 2 réservations simultanées.`
+        let message = `❌ Vous avez déjà ${canCreateResult.activeCount || 0} réservation(s) active(s). Maximum 2 réservations simultanées.`
         
         if (canCreateResult.blockingUsers && canCreateResult.blockingUsers.length > 0) {
           const uniqueUsers = Array.from(new Set(canCreateResult.blockingUsers.map(u => u.name)))
@@ -229,7 +241,7 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      // Créer la réservation avec tickets (sans participants)
+      // Créer la réservation avec tickets et participants
       const booking = await prisma.booking.create({
         data: {
           userId: dbUser.id,
@@ -238,7 +250,12 @@ export async function POST(req: NextRequest) {
           duree: duree,
           statut: BookingStatus.CONFIRME,
           ticketsUtilises: ticketsNecessaires,
-          utiliseTickets: true
+          utiliseTickets: true,
+          participants: participantIds && participantIds.length > 0 ? {
+            create: participantIds.map((participantId: string) => ({
+              userId: participantId
+            }))
+          } : undefined
         },
         include: {
           court: true,
@@ -277,7 +294,7 @@ export async function POST(req: NextRequest) {
         {
           success: true,
           booking: booking,
-          message: 'Réservation créée avec 3 tickets. Vous pouvez remplacer les tickets par des participants jusqu\'à 30 minutes avant la réservation.'
+          message: `Réservation créée avec ${ticketsNecessaires} ticket(s)${participantsNecessaires > 0 ? ` et ${participantsNecessaires} participant(s)` : ''}. Vous pouvez remplacer les tickets par des participants jusqu'à 30 minutes avant la réservation.`
         },
         { status: 201 }
       )
@@ -316,6 +333,34 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Vérifier le quota de réservations pour chaque participant
+    const participantsWithQuotaIssues: Array<{ id: string; name: string; activeCount: number }> = []
+    
+    for (const participantId of participantIds) {
+      const canCreateResult = await canUserCreateBooking(participantId)
+      if (!canCreateResult.canCreate && canCreateResult.activeCount && canCreateResult.activeCount >= 2) {
+        const participant = participants.find(p => p.id === participantId)
+        if (participant) {
+          participantsWithQuotaIssues.push({
+            id: participantId,
+            name: `${participant.prenom} ${participant.nom}`,
+            activeCount: canCreateResult.activeCount
+          })
+        }
+      }
+    }
+    
+    if (participantsWithQuotaIssues.length > 0) {
+      const names = participantsWithQuotaIssues.map(p => `• ${p.name} : ${p.activeCount} réservation(s) active(s)`)
+      return NextResponse.json(
+        {
+          error: 'Quota de réservations atteint pour certains participants',
+          message: `❌ Les participants suivants ont déjà atteint leur quota de 2 réservations actives :\n\n${names.join('\n')}\n\nVeuillez choisir d'autres participants.`
+        },
+        { status: 403 }
+      )
+    }
+
     // Vérifier les règles métier pour réservation avec participants
     if (!isBookingDateValid(bookingDate)) {
       return NextResponse.json(
@@ -329,7 +374,7 @@ export async function POST(req: NextRequest) {
 
       const canCreateResult = await canUserCreateBooking(dbUser.id)
       if (!canCreateResult.canCreate) {
-        let message = `Vous avez déjà ${canCreateResult.activeCount || 0} réservation(s) active(s). Maximum 2 réservations simultanées.`
+        let message = `❌ Vous avez déjà ${canCreateResult.activeCount || 0} réservation(s) active(s). Maximum 2 réservations simultanées.`
         
         if (canCreateResult.blockingUsers && canCreateResult.blockingUsers.length > 0) {
           const uniqueUsers = Array.from(new Set(canCreateResult.blockingUsers.map(u => u.name)))

@@ -17,7 +17,7 @@ model User {
   nom          String
   prenom       String
   email        String   @unique // Email unique (géré par les admins)
-  soldeTickets Int      @default(0) // Solde de tickets pour les réservations
+  soldeTickets Int      @default(3) // Solde de tickets pour les réservations (3 par défaut)
   role         UserRole @default(USER) // Rôle utilisateur (USER ou ADMIN)
   bloque       Boolean  @default(false) // Utilisateur bloqué (cotisation non payée, etc.)
   createdAt    DateTime @default(now())

@@ -61,8 +61,12 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
     organizerName: `${p.booking.user.prenom} ${p.booking.user.nom}`
   })) || []
   
-  // Fusionner et trier par date
-  const allUpcomingBookings = [...bookingsAsOrganizer, ...bookingsAsParticipant]
+  // Fusionner et trier par date, en évitant les doublons
+  // (si l'utilisateur est organisateur ET participant de la même réservation, on garde seulement la version organisateur)
+  const organizerIds = new Set(bookingsAsOrganizer.map(b => b.id))
+  const uniqueParticipantBookings = bookingsAsParticipant.filter(p => !organizerIds.has(p.id))
+  
+  const allUpcomingBookings = [...bookingsAsOrganizer, ...uniqueParticipantBookings]
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
   
   const upcomingBookings = allUpcomingBookings

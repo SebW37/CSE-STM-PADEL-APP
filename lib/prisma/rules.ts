@@ -9,9 +9,10 @@ import { BookingStatus } from '@prisma/client'
  * Vérifie si un utilisateur peut créer une nouvelle réservation
  * Contrainte : Maximum 2 réservations actives par employé (en tant qu'organisateur OU participant)
  * L'utilisateur ne doit pas être bloqué
+ * @param excludeBookingId - ID d'une réservation à exclure du calcul (utile pour la modification)
  * @returns {Promise<{canCreate: boolean, reason?: string, blockingUsers?: Array<{name: string, role: 'organizer' | 'participant', bookingDate: Date}>}>}
  */
-export async function canUserCreateBooking(userId: string): Promise<{
+export async function canUserCreateBooking(userId: string, excludeBookingId?: string): Promise<{
   canCreate: boolean
   reason?: string
   blockingUsers?: Array<{ name: string; role: 'organizer' | 'participant'; bookingDate: Date }>
@@ -34,6 +35,10 @@ export async function canUserCreateBooking(userId: string): Promise<{
 
   const now = new Date()
   
+  if (excludeBookingId) {
+    console.log(`[canUserCreateBooking] Exclusion de la réservation ${excludeBookingId} pour l'utilisateur ${userId}`)
+  }
+  
   // Récupérer les réservations où l'utilisateur est organisateur
   const asOrganizer = await prisma.booking.findMany({
     where: {
@@ -41,7 +46,8 @@ export async function canUserCreateBooking(userId: string): Promise<{
       statut: BookingStatus.CONFIRME,
       date: {
         gte: now // Réservations futures uniquement
-      }
+      },
+      id: excludeBookingId ? { not: excludeBookingId } : undefined
     },
     include: {
       user: {
@@ -77,7 +83,8 @@ export async function canUserCreateBooking(userId: string): Promise<{
         },
         userId: {
           not: userId // Exclure celles où il est aussi organisateur
-        }
+        },
+        id: excludeBookingId ? { not: excludeBookingId } : undefined
       }
     },
     include: {
@@ -110,6 +117,10 @@ export async function canUserCreateBooking(userId: string): Promise<{
   })
 
   const totalActiveBookings = asOrganizer.length + asParticipant.length
+  
+  if (excludeBookingId) {
+    console.log(`[canUserCreateBooking] Réservations trouvées pour ${userId}: ${asOrganizer.length} organisateur, ${asParticipant.length} participant = ${totalActiveBookings} total (après exclusion de ${excludeBookingId})`)
+  }
   
   if (totalActiveBookings >= 2) {
     // Construire la liste des utilisateurs qui bloquent

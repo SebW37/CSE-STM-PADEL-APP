@@ -59,3 +59,4 @@ Le fichier Excel doit avoir les mêmes colonnes que le CSV, avec la première li
 - Si un utilisateur existe déjà (même email), ses informations seront mises à jour
 - Les mots de passe sont générés automatiquement s'ils ne sont pas fournis dans le fichier
 
+

@@ -20,13 +20,15 @@
     "bookings:generate": "tsx scripts/generate-test-bookings.ts",
     "bookings:check-quotas": "tsx scripts/check-booking-quotas.ts",
     "bookings:fix-quotas": "tsx scripts/check-booking-quotas.ts --fix",
+    "bookings:fix-quotas-new": "tsx scripts/fix-booking-quotas.ts",
     "bookings:list": "tsx scripts/list-user-bookings.ts",
     "bookings:check-participations": "tsx scripts/check-participations.ts",
     "bookings:clear": "tsx scripts/clear-all-bookings.ts",
     "users:create-fake": "tsx scripts/create-fake-users.ts",
     "bookings:generate-respectful": "tsx scripts/generate-respectful-bookings.ts",
     "tickets:init": "tsx scripts/init-tickets.ts",
-    "debug:bookings": "tsx scripts/debug-user-bookings.ts"
+    "debug:bookings": "tsx scripts/debug-user-bookings.ts",
+    "fix:user-bookings": "tsx scripts/fix-user-bookings.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.7.1",

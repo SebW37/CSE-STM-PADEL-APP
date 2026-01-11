@@ -17,6 +17,8 @@ interface Booking {
   courtId: string
   date: string
   duree: number
+  utiliseTickets?: boolean
+  ticketsUtilises?: number
   user: {
     id: string
     nom: string
@@ -28,7 +30,8 @@ interface Booking {
     nom: string
   }
   participants?: {
-    user: {
+    userId?: string
+    user?: {
       id: string
       nom: string
       prenom: string
@@ -58,6 +61,7 @@ interface AvailableUser {
   nom: string
   prenom: string
   email: string
+  activeBookingsCount?: number
 }
 
 export default function DashboardPage() {
@@ -74,6 +78,7 @@ export default function DashboardPage() {
   const [blockedSlots, setBlockedSlots] = useState<any[]>([])
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [timeRangeFilter, setTimeRangeFilter] = useState<'all' | '0-8' | '8-16' | '16-24'>('all')
+  const [editingBooking, setEditingBooking] = useState<Booking | null>(null)
 
   // S'assurer que la date sélectionnée n'est pas dans le passé
   useEffect(() => {
@@ -101,8 +106,15 @@ export default function DashboardPage() {
       
       // Charger l'utilisateur
       const userRes = await fetch('/api/user')
-      if (!userRes.ok) throw new Error('Erreur lors du chargement de l\'utilisateur')
+      if (!userRes.ok) {
+        const errorData = await userRes.json().catch(() => ({}))
+        console.error('Erreur API /user:', errorData)
+        throw new Error(errorData.message || errorData.error || `Erreur lors du chargement de l'utilisateur (${userRes.status})`)
+      }
       const userData = await userRes.json()
+      if (!userData.user) {
+        throw new Error('Données utilisateur invalides')
+      }
       setUser(userData.user)
       setCurrentUserId(userData.user.id)
 
@@ -162,10 +174,49 @@ export default function DashboardPage() {
     setBookingDialogOpen(true)
   }
 
-  const handleBookingConfirm = async (participantIds: string[] | null, useTickets?: boolean) => {
+  const handleBookingConfirm = async (participantIds: string[] | null, ticketsCount?: number) => {
     if (!selectedSlot) return
 
     try {
+      // Si on modifie une réservation existante
+      if (editingBooking && editingBooking.id) {
+        console.log('Modification de réservation:', editingBooking.id)
+        const response = await fetch(`/api/bookings/${editingBooking.id}/update`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            participantIds: participantIds || [],
+            ticketsCount: ticketsCount || 0,
+          }),
+        })
+
+        const data = await response.json()
+
+        if (!response.ok) {
+          let errorMessage = data.message || data.error || 'Erreur lors de la modification'
+          alert(errorMessage)
+          console.error('Erreur de modification:', {
+            status: response.status,
+            data: data
+          })
+          return
+        }
+
+        const ticketsMsg = ticketsCount && ticketsCount > 0 
+          ? `Réservation modifiée avec ${ticketsCount} ticket(s)${participantIds && participantIds.length > 0 ? ` et ${participantIds.length} participant(s)` : ''} !`
+          : 'Réservation modifiée : tous les tickets ont été remplacés par 4 participants. Les tickets ont été restitués.'
+        alert(ticketsMsg)
+        setBookingDialogOpen(false)
+        setSelectedSlot(null)
+        setEditingBooking(null)
+        loadData()
+        return
+      }
+
+      // Sinon, créer une nouvelle réservation
+      console.log('Création d\'une nouvelle réservation (editingBooking:', editingBooking, ')')
       const response = await fetch('/api/bookings', {
         method: 'POST',
         headers: {
@@ -176,7 +227,7 @@ export default function DashboardPage() {
           date: selectedSlot.slot.start.toISOString(),
           duree: selectedSlot.slot.duration,
           participantIds: participantIds || [],
-          useTickets: useTickets || false,
+          ticketsCount: ticketsCount || 0,
         }),
       })
 
@@ -200,12 +251,13 @@ export default function DashboardPage() {
         return
       }
 
-      alert(useTickets 
-        ? 'Réservation confirmée avec 3 tickets ! Vous pouvez remplacer les tickets par des participants jusqu\'à 30 minutes avant la réservation.'
+      const ticketsMsg = ticketsCount && ticketsCount > 0 
+        ? `Réservation confirmée avec ${ticketsCount} ticket(s)${participantIds && participantIds.length > 0 ? ` et ${participantIds.length} participant(s)` : ''} ! Vous pouvez remplacer les tickets par des participants jusqu'à 30 minutes avant la réservation.`
         : 'Réservation confirmée avec succès !'
-      )
+      alert(ticketsMsg)
       setBookingDialogOpen(false)
       setSelectedSlot(null)
+      setEditingBooking(null)
       // Recharger les données
       loadData()
     } catch (err: any) {
@@ -227,13 +279,13 @@ export default function DashboardPage() {
       }
 
       // Ouvrir le dialog en mode modification
+      setEditingBooking(booking)
       setSelectedSlot({
         slot: { start: bookingDate, duration: booking.duree },
         courtId: booking.courtId,
         courtName: `Terrain ${booking.court.numero} - ${booking.court.nom}`
       })
       setBookingDialogOpen(true)
-      // TODO: Passer le mode modification au dialog
     }
   }
 
@@ -484,6 +536,7 @@ export default function DashboardPage() {
           onClose={() => {
             setBookingDialogOpen(false)
             setSelectedSlot(null)
+            setEditingBooking(null)
           }}
           onConfirm={handleBookingConfirm}
           slotDate={selectedSlot.slot.start}
@@ -492,6 +545,12 @@ export default function DashboardPage() {
           availableUsers={availableUsers}
           currentUserId={currentUserId}
           currentUserTickets={user?.soldeTickets || 0}
+          isModifyMode={!!editingBooking}
+          bookingId={editingBooking?.id}
+          existingBooking={editingBooking ? {
+            ticketsUtilises: editingBooking.ticketsUtilises || 0,
+            participants: editingBooking.participants?.map(p => ({ userId: p.user?.id || p.userId })) || []
+          } : undefined}
         />
       )}
     </div>
